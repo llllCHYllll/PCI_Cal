@@ -72,6 +72,9 @@ class_map = {
                             'Seal Coat': 6}
 }
 
+target = 'PCI'
+group_col = 'SHRP_ID'
+
 # 把PCI精确值转变为区间值，目前为10一个区间，从0到9
 def get_interval_number(value, interval_length=10):
 
@@ -151,106 +154,114 @@ def fill_pci_linear(group):
     
     return group
 
-def main():
-    # used_data主要是为了后面可以筛选出高质量数据用
-    used_data = set()
-    with open(path_to_quality, "r", encoding="gbk") as file:
-        csv_reader = csv.reader(file)
-        header = next(csv_reader)
-        for row in csv_reader:
-            if row[2] == '1':
-                used_data.add(row[0] + '_' + row[1])       
-    file.close()
+def preprocess(df):
+    df = df.sort_values([group_col, 'survey_date'])
+    df['prev_PCI'] = df.groupby(group_col)[target].shift(1)
+    df = df[~df['prev_PCI'].isna()]
+    df = df[~df[target].isna()]
+    return df
 
-    # High_quality：筛选质量为1的数据
-    # Filter_none：剔除空值（一整行数据）
-    # Filled_interval：是否将PCI处理为区间值
-    High_quality = False
-    Filter_none = False
-    Filled_interval = True
-    all_data = dict()
+# used_data主要是为了后面可以筛选出高质量数据用
+used_data = set()
+with open(path_to_quality, "r", encoding="gbk") as file:
+    csv_reader = csv.reader(file)
+    header = next(csv_reader)
+    for row in csv_reader:
+        if row[2] == '1':
+            used_data.add(row[0] + '_' + row[1])       
+file.close()
 
-    # 读取原始数据
-    with open(path_to_rawdata, "r", encoding="utf-8") as file:
-        csv_reader = csv.reader(file)
-        header = next(csv_reader)
-        print('生成道路ID索引：')
-        for row in tqdm(list(csv_reader)):
-            road_id = row[0] + '_' + row[1] # 这里把第一列和第二列合并作为路段索引，可以保证唯一性
-            if road_id not in used_data and High_quality:
-                continue
-            if '' in row and Filter_none:
-                continue
-            row[1] = road_id
-            if road_id not in all_data.keys():
-                all_data[road_id] = []
-            all_data[road_id].append(row[1:])
-    file.close()
+# High_quality：筛选质量为1的数据
+# Filter_none：剔除空值（一整行数据）
+# Filled_interval：是否将PCI处理为区间值
+High_quality = False
+Filter_none = False
+Filled_interval = True
+all_data = dict()
 
-    # 这里把年份转变为时间差（年为单位），例如一段数据起始年份为1990年，那么1998年的数据在时间上会被处理为8
-    print('将年份转换为时间差：')
-    for key in tqdm(all_data.keys()):
-        sub_data = sorted(all_data[key], key=lambda x:int(x[1]))
-        start = int(sub_data[0][1])
-        sub_data = [[row[0], int(row[1])-start] + row[2:] for row in sub_data]
-        all_data[key] = sub_data
+# 读取原始数据
+with open(path_to_rawdata, "r", encoding="utf-8") as file:
+    csv_reader = csv.reader(file)
+    header = next(csv_reader)
+    print('生成道路ID索引：')
+    for row in tqdm(list(csv_reader)):
+        road_id = row[0] + '_' + row[1] # 这里把第一列和第二列合并作为路段索引，可以保证唯一性
+        if road_id not in used_data and High_quality:
+            continue
+        if '' in row and Filter_none:
+            continue
+        row[1] = road_id
+        if road_id not in all_data.keys():
+            all_data[road_id] = []
+        all_data[road_id].append(row[1:])
+file.close()
 
-    # 生成训练数据，格式为字典，为了方便导出为json并被模型读取
-    print('生成训练数据：')
-    inputs = {key:[] for key in headers[1:]}
-    for road_id, road_name in enumerate(tqdm(list(all_data.keys()))):
-        for row in all_data[road_name]:
-            inputs['SHRP_ID'].append(road_id)
-            for key, value in zip(headers[2:], row[1:]):
-                if key in class_map.keys():
-                    inputs[key].append(class_map[key][value])
-                elif key == headers[2]:
-                    inputs[key].append(int(value))
+# 这里把年份转变为时间差（年为单位），例如一段数据起始年份为1990年，那么1998年的数据在时间上会被处理为8
+print('将年份转换为时间差：')
+for key in tqdm(all_data.keys()):
+    sub_data = sorted(all_data[key], key=lambda x:int(x[1]))
+    start = int(sub_data[0][1])
+    sub_data = [[row[0], int(row[1])-start] + row[2:] for row in sub_data]
+    all_data[key] = sub_data
+
+# 生成训练数据，格式为字典，为了方便导出为json并被模型读取
+print('生成训练数据：')
+inputs = {key:[] for key in headers[1:]}
+for road_id, road_name in enumerate(tqdm(list(all_data.keys()))):
+    for row in all_data[road_name]:
+        inputs['SHRP_ID'].append(road_id)
+        for key, value in zip(headers[2:], row[1:]):
+            if key in class_map.keys():
+                inputs[key].append(class_map[key][value])
+            elif key == headers[2]:
+                inputs[key].append(int(value))
+            elif key == 'PCI':
+                inputs[key].append(float(value) if value != '' else None)
+            else:
+                inputs[key].append(float(value) if value != '' else -1)
+
+print('修补PCI值：')
+# 以下主要是处理缺失值
+if data_type == 'train':
+    data = {
+        'batch': inputs['SHRP_ID'],
+        'PCI': inputs['PCI'],
+        'Construction': inputs['REAL_Construction_Type']
+    }
+    for idx, val in enumerate(tqdm(data['Construction'])):
+        if val != 0 and data['PCI'][idx] is None:
+            if val == 1:
+                if data['batch'][idx-1] == data['batch'][idx] and data['PCI'][idx-1] is not None:
+                    data['PCI'][idx] = min(100, max(0, -68.13*math.log(data['PCI'][idx-1])+314.04))
                 else:
-                    inputs[key].append(float(value) if value != '' else None)
-
-    print('修补PCI值：')
-    # 以下主要是处理缺失值
-    if data_type == 'train':
-        data = {
-            'batch': inputs['SHRP_ID'],
-            'PCI': inputs['PCI'],
-            'Construction': inputs['REAL_Construction_Type']
-        }
-        for idx, val in enumerate(tqdm(data['Construction'])):
-            if val != 0 and data['PCI'][idx] is None:
-                if val == 1:
-                    if data['batch'][idx-1] == data['batch'][idx] and data['PCI'][idx-1] is not None:
-                        data['PCI'][idx] = min(100, max(0, -68.13*math.log(data['PCI'][idx-1])+314.04))
-                    else:
-                        data['PCI'][idx] = 85
-                elif val ==2 or val == 3:
-                    data['PCI'][idx] = 100
-                elif val == 4:
-                    if data['batch'][idx-1] == data['batch'][idx] and data['PCI'][idx-1] is not None:
-                        data['PCI'][idx] = min(100, max(0,-80.59*math.log(data['PCI'][idx-1])+371.24))
-                    else:
-                        data['PCI'][idx] = 85
-                elif val == 5:
                     data['PCI'][idx] = 85
-                elif val == 6:
-                    if data['batch'][idx-1] == data['batch'][idx] and data['PCI'][idx-1] is not None:
-                        data['PCI'][idx] = min(100, max(0, -77.8*math.log(data['PCI'][idx-1])+358))
-                    else:
-                        data['PCI'][idx] = 85
-        df = pd.DataFrame(data)
-        filled_df = df.groupby('batch', group_keys=False).apply(fill_pci_linear)
-        inputs['PCI'] = filled_df['PCI'].tolist()
+            elif val ==2 or val == 3:
+                data['PCI'][idx] = 100
+            elif val == 4:
+                if data['batch'][idx-1] == data['batch'][idx] and data['PCI'][idx-1] is not None:
+                    data['PCI'][idx] = min(100, max(0,-80.59*math.log(data['PCI'][idx-1])+371.24))
+                else:
+                    data['PCI'][idx] = 85
+            elif val == 5:
+                data['PCI'][idx] = 85
+            elif val == 6:
+                if data['batch'][idx-1] == data['batch'][idx] and data['PCI'][idx-1] is not None:
+                    data['PCI'][idx] = min(100, max(0, -77.8*math.log(data['PCI'][idx-1])+358))
+                else:
+                    data['PCI'][idx] = 85
+    df = pd.DataFrame(data)
+    filled_df = df.groupby('batch', group_keys=False).apply(fill_pci_linear)
+    inputs['PCI'] = filled_df['PCI'].tolist()
 
-    # 精确值转区间
-    if Filled_interval:
-        inputs['PCI'] = [get_interval_number(x) if x is not None else None for x in inputs['PCI']]
-    else:
-        inputs['PCI'] = filled_df['PCI'].tolist()
+# 精确值转区间
+if Filled_interval:
+    # inputs['PCI'] = [get_interval_number(x) if x is not None else None for x in inputs['PCI']]
+    inputs['PCI'] = [round(x) if x is not None else None for x in inputs['PCI']]
+else:
+    inputs['PCI'] = filled_df['PCI'].tolist()
 
-    # 将所有处理好的数据保存为json文件，方便后续模型读取
-    with open(json_output, "w", encoding="utf-8") as f:
-        json.dump(inputs, f, indent=4)
+inputs = preprocess(pd.DataFrame(inputs)).to_dict(orient='list')
 
-if __name__ == '__main__':
-    main()
+# 将所有处理好的数据保存为json文件，方便后续模型读取
+with open(json_output, "w", encoding="utf-8") as f:
+    json.dump(inputs, f, indent=4)
