@@ -75,6 +75,62 @@ class_map = {
 target = 'PCI'
 group_col = 'SHRP_ID'
 
+def new_road(df):
+    def new_road_group(group):
+        rows = group.to_dict('records')
+        non_zero_indices = [i for i, row in enumerate(rows) if row['REAL_Construction_Type'] != 0]
+        offset = 0
+        
+        for i in non_zero_indices:
+            current = i + offset
+            new_row = rows[current].copy()
+            rows.insert(current + 1, new_row)
+            
+            for j in range(current + 1, len(rows)):
+                rows[j]['SHRP_ID'] = f"{rows[j]['SHRP_ID']}_fixed"
+            
+            offset += 1
+        
+        return pd.DataFrame(rows)
+        
+    processed_dfs = []
+    for shrp_id, group in df.groupby('SHRP_ID'):
+        processed_dfs.append(new_road_group(group))
+
+    final_df = pd.concat(processed_dfs).reset_index(drop=True)
+    return final_df
+
+def full_fill_data(df):
+    tqdm.pandas()
+
+    grouped = df.groupby('SHRP_ID', group_keys=False)
+    
+    def process_group(group):
+        group = group.sort_values('survey_date')
+        new_rows = []
+        
+        for i in range(len(group)):
+            current_row = group.iloc[i]
+            if i == 0:
+                new_row = current_row.copy()
+                new_row['Delta_Year'] = 0
+                new_row['prev_PCI'] = current_row['PCI']
+                new_rows.append(new_row)
+            else:
+                prev_rows = group.iloc[:i]
+                for _, prev_row in prev_rows.iterrows():
+                    new_row = current_row.copy()
+                    new_row['Delta_Year'] = current_row['survey_date'] - prev_row['survey_date']
+                    new_row['prev_PCI'] = prev_row['PCI']
+                    new_rows.append(new_row)
+        
+        return pd.DataFrame(new_rows)
+    
+    # result = grouped.apply(process_group)
+    result = grouped.progress_apply(process_group)
+    
+    return result
+
 # 把PCI精确值转变为区间值，目前为10一个区间，从0到9
 def get_interval_number(value, interval_length=10):
 
@@ -154,13 +210,6 @@ def fill_pci_linear(group):
     
     return group
 
-def preprocess(df):
-    df = df.sort_values([group_col, 'survey_date'])
-    df['prev_PCI'] = df.groupby(group_col)[target].shift(1)
-    df = df[~df['prev_PCI'].isna()]
-    df = df[~df[target].isna()]
-    return df
-
 # used_data主要是为了后面可以筛选出高质量数据用
 used_data = set()
 with open(path_to_quality, "r", encoding="gbk") as file:
@@ -196,20 +245,13 @@ with open(path_to_rawdata, "r", encoding="utf-8") as file:
         all_data[road_id].append(row[1:])
 file.close()
 
-# 这里把年份转变为时间差（年为单位），例如一段数据起始年份为1990年，那么1998年的数据在时间上会被处理为8
-print('将年份转换为时间差：')
-for key in tqdm(all_data.keys()):
-    sub_data = sorted(all_data[key], key=lambda x:int(x[1]))
-    start = int(sub_data[0][1])
-    sub_data = [[row[0], int(row[1])-start] + row[2:] for row in sub_data]
-    all_data[key] = sub_data
-
 # 生成训练数据，格式为字典，为了方便导出为json并被模型读取
 print('生成训练数据：')
 inputs = {key:[] for key in headers[1:]}
 for road_id, road_name in enumerate(tqdm(list(all_data.keys()))):
     for row in all_data[road_name]:
-        inputs['SHRP_ID'].append(road_id)
+        # inputs['SHRP_ID'].append(road_id)
+        inputs['SHRP_ID'].append(road_name)
         for key, value in zip(headers[2:], row[1:]):
             if key in class_map.keys():
                 inputs[key].append(class_map[key][value])
@@ -260,7 +302,10 @@ if Filled_interval:
 else:
     inputs['PCI'] = filled_df['PCI'].tolist()
 
-inputs = preprocess(pd.DataFrame(inputs)).to_dict(orient='list')
+print('正在扩充数据集，时间较长，耐心等待...')
+df = pd.DataFrame(inputs)
+df_newroad = new_road(df)
+inputs = full_fill_data(df_newroad).to_dict(orient='list')
 
 # 将所有处理好的数据保存为json文件，方便后续模型读取
 with open(json_output, "w", encoding="utf-8") as f:
