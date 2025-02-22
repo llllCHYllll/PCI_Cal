@@ -4,7 +4,7 @@ import pandas as pd
 import math
 from tqdm import tqdm
 
-data_type = 'train'
+data_type = 'dropnan' # 'dropnan'是把所有PCI为空的值丢掉，如果是线性差值的话就是 train
 path_to_rawdata = './rawdata/rawdata.csv'
 path_to_quality = './rawdata/quality.csv'
 json_output = './rawdata/filled_interval_all.json'
@@ -225,7 +225,7 @@ file.close()
 # Filled_interval：是否将PCI处理为区间值
 High_quality = False
 Filter_none = False
-Filled_interval = True
+Filled_interval = False
 all_data = dict()
 
 # 读取原始数据
@@ -294,13 +294,15 @@ if data_type == 'train':
     df = pd.DataFrame(data)
     filled_df = df.groupby('batch', group_keys=False).apply(fill_pci_linear)
     inputs['PCI'] = filled_df['PCI'].tolist()
+elif data_type == 'dropnan':
+    inputs = pd.DataFrame(inputs).dropna(subset=['PCI']).to_dict(orient='list')
+    
 
 # 精确值转区间
 if Filled_interval:
-    # inputs['PCI'] = [get_interval_number(x) if x is not None else None for x in inputs['PCI']]
-    inputs['PCI'] = [round(x) if x is not None else None for x in inputs['PCI']]
-else:
-    inputs['PCI'] = filled_df['PCI'].tolist()
+    inputs['PCI'] = [get_interval_number(x) if x is not None else None for x in inputs['PCI']]
+# else:
+#     inputs['PCI'] = [round(x) if x is not None else None for x in inputs['PCI']]
 
 print('正在扩充数据集，时间较长，耐心等待...')
 df = pd.DataFrame(inputs)
