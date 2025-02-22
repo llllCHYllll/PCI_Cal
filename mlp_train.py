@@ -113,15 +113,18 @@ for epoch in range(epochs):
     
     if (epoch+1) % 1 == 0:
         print(f'Epoch [{epoch+1}/{epochs}], Loss: {loss.item():.4f}')
+    if (epoch + 1) % 20 == 0:
+        torch.save(model.state_dict(), 'mlp_weights_ep'+str(epoch+1)+'.pth')
+        print('模型权重已保存到 mlp_weights_ep'+str(epoch+1)+'.pth')
 
 # 保存模型权重
-torch.save(model.state_dict(), 'interval_model_weights.pth')
-print("模型权重已保存到 interval_model_weights.pth")
+torch.save(model.state_dict(), 'mlp_weights_final.pth')
+print("模型权重已保存到 mlp_weights_final.pth")
 
 # 加载模型权重并推理
-model = IntervalModel().to(device)
-model.load_state_dict(torch.load('interval_model_weights.pth'))
-model.eval() 
+model = IntervalModel().to(device)  # 重新初始化模型
+model.load_state_dict(torch.load('mlp_weights_final.pth'))
+model.eval()  # 设置为评估模式
 
 X = torch.tensor(X_test.values, dtype=torch.float32).to(device)
 y = torch.tensor(y_test.values, dtype=torch.float32).view(-1, 1).to(device)
