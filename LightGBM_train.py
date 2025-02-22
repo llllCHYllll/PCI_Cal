@@ -4,7 +4,7 @@ import pandas as pd
 import lightgbm as lgb
 import matplotlib.pyplot as plt
 
-features = ['survey_date', 'REAL_SS_MATL', 'GS_THICKNESS', 'REAL2_GS_MATL', 'TS_THICKNESS', 'REAL_TS_MATL', 
+features = ['Delta_Year', 'REAL_SS_MATL', 'GS_THICKNESS', 'REAL2_GS_MATL', 'TS_THICKNESS', 'REAL_TS_MATL', 
            'GB_THICKNESS', 'REAL_GB_MATL', 'TB_THICKNESS', 'REAL_TB_MATL', 'PC_THICKNESS', 'AC_THICKNESS', 
            'REAL_AC_MATL', 'REAL_Construction_Type', 'LANE_WIDTH', 'LANE_LENGTH', 'LANES_NO', 'PRECIPITATION', 
            'EVAPORATION', 'EMISSIVITY_AVG', 'SHORTWAVE_SURFACE_AVG', 'REL_HUM_AVG_AVG', 'TEMP_AVG', 
@@ -27,12 +27,12 @@ train_data = lgb.Dataset(X_train, label=y_train)
 
 params_low = {
     'objective': 'quantile',
-    'alpha': 0.45,
+    'alpha': 0.4,
     'metric': 'quantile',
     'boosting_type': 'gbdt',
-    'learning_rate': 0.005,     
-    'num_leaves': 40,          
-    'max_depth': 4,            
+    'learning_rate': 0.001,     
+    'num_leaves': 64,          
+    'max_depth': 8,            
     'min_data_in_leaf': 20,    
     'lambda_l2': 0.1,          
     'verbose': -1,
@@ -43,12 +43,12 @@ model_low = lgb.train(params_low, train_data)
 
 params_high = {
     'objective': 'quantile',
-    'alpha': 0.55,
+    'alpha': 0.6,
     'metric': 'quantile',
     'boosting_type': 'gbdt',
-    'learning_rate': 0.005,     
-    'num_leaves': 40,          
-    'max_depth': 4,           
+    'learning_rate': 0.001,     
+    'num_leaves': 64,          
+    'max_depth': 8,           
     'min_data_in_leaf': 20,
     'lambda_l2': 0.1,     
     'verbose': -1,
@@ -62,9 +62,10 @@ pred_high = model_high.predict(X_test)
 coverage = np.mean((y_test >= pred_low) & (y_test <= pred_high))
 print(f"预测区间覆盖率: {coverage * 100:.2f}%")
 
-plt.figure(figsize=(12, 6))
-plt.plot(y_test.values[:50], label="True E")
-plt.fill_between(range(50), pred_low[:50], pred_high[:50], alpha=0.3, color="orange", label="Predicted Interval")
-plt.legend()
-plt.title("LightGBM Predicted Interval")
-plt.show()
+# 如果在ipynb中运行的话，可以去掉下面的代码前面的注释实现结果可视化
+# plt.figure(figsize=(12, 6))
+# plt.plot(y_test.values[:50], label="True E")
+# plt.fill_between(range(50), pred_low[:50], pred_high[:50], alpha=0.3, color="orange", label="Predicted Interval")
+# plt.legend()
+# plt.title("LightGBM Predicted Interval")
+# plt.show()
