@@ -4,7 +4,7 @@ import pandas as pd
 import math
 from tqdm import tqdm
 
-data_type = 'train' # 如果是推理数据的话就是 test
+data_type = 'train'
 path_to_rawdata = './rawdata/rawdata.csv'
 path_to_quality = './rawdata/quality.csv'
 json_output = './rawdata/filled_interval_all.json'
