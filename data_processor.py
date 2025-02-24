@@ -4,7 +4,7 @@ import pandas as pd
 import math
 from tqdm import tqdm
 
-data_type = 'dropnan' # 'dropnan'是把所有PCI为空的值丢掉，如果是线性差值的话就是 train
+data_type = 'train' # 'dropnan'是把所有PCI为空的值丢掉，如果是线性差值的话就是 train
 path_to_rawdata = './rawdata/rawdata.csv'
 path_to_quality = './rawdata/quality.csv'
 json_output = './rawdata/filled_interval_all.json'
