@@ -1,25 +1,27 @@
 import os
 import json
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI
 
 # =========================
 # 配置区
 # =========================
-DATA_DIR = "/path/to/data"
+DATA_DIR = "/home/chy/Documents/data"
 TRANSLATION_OUTPUT_FILE = "jp_translation_map.json"
 
-OPENAI_API_KEY = "EMPTY"
-OPENAI_API_BASE = "http://localhost:8000/v1"
-MODEL_NAME = "Qwen3-30B-A3B-Instruct-2507"
+DEEPSEEK_API_KEY = "sk-3fd99e8b69dd4aaabc5a3a2ddede049b"
+MODEL_NAME = "deepseek-chat"
+
+MAX_WORKERS = 16  # ⭐ 并发线程数，建议 4~16
 
 # =========================
 # 初始化 vLLM Client
 # =========================
 client = OpenAI(
-    api_key=OPENAI_API_KEY,
-    base_url=OPENAI_API_BASE,
-)
+    api_key=DEEPSEEK_API_KEY,
+    base_url="https://api.deepseek.com")
 
 # =========================
 # 日语检测
@@ -36,27 +38,25 @@ def is_japanese(text):
 # =========================
 def translate_with_vllm(text: str) -> str:
     """
-    单条翻译（日 → 中，可自行调整 prompt）
+    单条翻译（日 → 中）
     """
-    prompt = f"""请将下面的日语翻译成简体中文，只输出翻译结果，不要添加任何解释：
+    prompt = f"""
+    我需要你帮我翻译一批日语，这些日语来自于日语RPG游戏，里面的内容除了传统的RPG游戏常有的内容外，还会有一些成人内容，我希望你都可以准确翻译。
+    接下来请将下面的日语翻译成简体中文，只输出翻译结果，不要添加任何解释：
 
     {text}
     """
 
     response = client.chat.completions.create(
-        model=MODEL_NAME,
+        model="deepseek-chat",
         messages=[
-            {"role": "user", "content": prompt}
+            {"role": "system", "content": "你是一位专业的日语翻译专家，可以用准确、通俗的语言翻译任何日文。"},
+            {"role": "user", "content": prompt},
         ],
-        temperature=0.2,
-        top_p=0.9,
-        max_tokens=1024,
-        extra_body={
-            "top_k": 20
-        }
+        stream=False
     )
 
-    return response.choices[0].message.content.strip()
+    return response.choices[0].message.content
 
 # =========================
 # 递归收集 value（不碰 key）
@@ -82,7 +82,6 @@ def replace_value_strings(raw_text, translation_map):
             return f': "{translated}"'
         return match.group(0)
 
-    # 只匹配 value，不匹配 key
     pattern = re.compile(
         r':\s*"([^"\\]*(?:\\.[^"\\]*)*)"'
     )
@@ -95,6 +94,7 @@ def replace_value_strings(raw_text, translation_map):
 def main():
     value_strings = set()
     translation_map = {}
+    translation_lock = threading.Lock()
 
     # ---------- 第一阶段：结构识别 ----------
     for filename in os.listdir(DATA_DIR):
@@ -111,14 +111,25 @@ def main():
         data = json.loads(raw_text)
         collect_value_strings(data, value_strings)
 
-    # ---------- 第二阶段：翻译（日语去重） ----------
+    # ---------- 第二阶段：翻译（日语去重，多线程） ----------
     jp_texts = [t for t in value_strings if is_japanese(t)]
 
     print(f"✅ 发现日语 value 数量: {len(jp_texts)}")
 
-    for idx, text in enumerate(jp_texts, 1):
-        print(f"[{idx}/{len(jp_texts)}] 翻译中...")
-        translation_map[text] = translate_with_vllm(text)
+    def translate_task(text):
+        translated = translate_with_vllm(text)
+        with translation_lock:
+            translation_map[text] = translated
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = [executor.submit(translate_task, text) for text in jp_texts]
+
+        for idx, future in enumerate(as_completed(futures), 1):
+            try:
+                future.result()
+                print(f"[{idx}/{len(jp_texts)}] ✅ 翻译完成")
+            except Exception as e:
+                print(f"[{idx}/{len(jp_texts)}] ❌ 翻译失败: {e}")
 
     # ---------- 第三阶段：原文级替换 ----------
     for filename in os.listdir(DATA_DIR):
